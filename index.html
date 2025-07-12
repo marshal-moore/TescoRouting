@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UK Postcode Route Optimizer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&libraries=places,geometry"></script>
+    <style>
+        .postcode-input:focus-within {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 1px #3b82f6;
+        }
+        .map-container {
+            height: 500px;
+            transition: all 0.3s ease;
+        }
+        .route-group {
+            border-left: 4px solid #3b82f6;
+        }
+        .draggable-item {
+            cursor: move;
+            touch-action: none;
+        }
+        @media (max-width: 768px) {
+            .map-container {
+                height: 300px;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <header class="mb-8 text-center">
+            <h1 class="text-3xl md:text-4xl font-bold text-blue-600 mb-2">UK Postcode Route Optimizer</h1>
+            <p class="text-gray-600 max-w-2xl mx-auto">Enter multiple UK postcodes to generate optimal routes in groups of 6 visits between your start and end points.</p>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Input Section -->
+            <div class="lg:col-span-1 bg-white rounded-lg shadow-md p-6">
+                <div class="mb-6">
+                    <h2 class="text-xl font-semibold text-gray-800 mb-4">Route Details</h2>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <label for="startPostcode" class="block text-sm font-medium text-gray-700 mb-1">Start Postcode</label>
+                            <div class="postcode-input flex items-center border border-gray-300 rounded-md px-3 py-2 focus-within:ring-1">
+                                <i class="fas fa-map-marker-alt text-blue-500 mr-2"></i>
+                                <input type="text" id="startPostcode" placeholder="e.g. SW1A 1AA" 
+                                    class="flex-1 outline-none text-sm" autocomplete="off">
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <label for="endPostcode" class="block text-sm font-medium text-gray-700 mb-1">End Postcode</label>
+                            <div class="postcode-input flex items-center border border-gray-300 rounded-md px-3 py-2 focus-within:ring-1">
+                                <i class="fas fa-flag-checkered text-red-500 mr-2"></i>
+                                <input type="text" id="endPostcode" placeholder="e.g. EC1A 1BB" 
+                                    class="flex-1 outline-none text-sm" autocomplete="off">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mb-6">
+                    <div class="flex justify-between items-center mb-2">
+                        <div>
+                            <label class="text-sm font-medium text-gray-700">Visits Postcodes</label>
+                            <select id="visitsPerGroup" class="ml-2 text-xs border border-gray-300 rounded px-2 py-1">
+                                <option value="3">3 visits/group</option>
+                                <option value="4">4 visits/group</option>
+                                <option value="5">5 visits/group</option>
+                                <option value="6" selected>6 visits/group</option>
+                                <option value="7">7 visits/group</option>
+                                <option value="8">8 visits/group</option>
+                                <option value="9">9 visits/group</option>
+                                <option value="10">10 visits/group</option>
+                            </select>
+                        </div>
+                        <button id="addPostcode" class="text-xs bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600">
+                            <i class="fas fa-plus mr-1"></i> Add
+                        </button>
+                    </div>
+                    
+                    <div id="postcodesContainer" class="border border-gray-300 rounded-md p-2 min-h-40 max-h-60 overflow-y-auto">
+                        <div class="flex items-center mb-2 draggable-item" draggable="true">
+                            <i class="fas fa-grip-vertical text-gray-400 mr-2 cursor-move"></i>
+                            <input type="text" placeholder="e.g. M1 1AA" class="flex-1 text-sm border-b border-gray-200 py-1 outline-none">
+                            <button class="ml-2 text-red-400 hover:text-red-600">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-2 flex justify-between">
+                        <button id="pastePostcodes" class="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded hover:bg-gray-300">
+                            <i class="fas fa-paste mr-1"></i> Paste Multiple
+                        </button>
+                        <button id="clearAll" class="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded hover:bg-gray-300">
+                            <i class="fas fa-trash-alt mr-1"></i> Clear All
+                        </button>
+                    </div>
+                </div>
+
+                <div class="mb-4">
+                    <label class="flex items-center">
+                        <input type="checkbox" id="optimizeRoute" class="rounded text-blue-600" checked>
+                        <span class="ml-2 text-sm text-gray-700">Optimize route order</span>
+                    </label>
+                </div>
+
+                <button id="generateRoutes" class="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition duration-200 flex items-center justify-center">
+                    <i class="fas fa-route mr-2"></i> Generate Optimal Routes
+                </button>
+            </div>
+
+            <!-- Results Section -->
+            <div class="lg:col-span-2 space-y-6">
+                <!-- Map Container -->
+                <div class="bg-white rounded-lg shadow-md overflow-hidden">
+                    <div id="map" class="map-container w-full"></div>
+                </div>
+
+                <!-- Route Groups -->
+                <div id="routeGroups" class="space-y-4">
+                    <div class="bg-white rounded-lg shadow-md p-4 route-group">
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 class="font-semibold text-blue-600">Route Group 1</h3>
+                            <span class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">6 visits</span>
+                        </div>
+                        <div class="bg-gray-50 p-3 rounded-md mb-2">
+                            <div class="flex items-center text-sm text-gray-600 mb-1">
+                                <i class="fas fa-map-marker-alt text-blue-500 mr-2"></i>
+                                <span>SW1A 1AA (Start)</span>
+                            </div>
+                            <ol class="list-decimal list-inside ml-5 space-y-1 text-sm">
+                                <li class="text-gray-700">EC1A 1BB</li>
+                                <li class="text-gray-700">W1A 1AA</li>
+                                <li class="text-gray-700">WC2N 5DU</li>
+                                <li class="text-gray-700">SE1 7PB</li>
+                                <li class="text-gray-700">N1 9GU</li>
+                                <li class="text-gray-700">E1 6AN</li>
+                            </ol>
+                            <div class="flex items-center text-sm text-gray-600 mt-2">
+                                <i class="fas fa-flag-checkered text-red-500 mr-2"></i>
+                                <span>EC1A 1BB (End)</span>
+                            </div>
+                        </div>
+                        <div class="flex justify-between items-center text-sm">
+                            <span class="text-gray-500"><i class="fas fa-road mr-1"></i> Estimated distance: 12.4 miles</span>
+                            <span class="text-gray-500"><i class="fas fa-clock mr-1"></i> Estimated time: 42 min</span>
+                            <span class="text-gray-500"><i class="fas fa-tag mr-1"></i> Contains toll roads</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Paste Modal -->
+    <div id="pasteModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
+        <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-semibold">Paste Multiple Postcodes</h3>
+                <button id="closePasteModal" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <textarea id="bulkPostcodes" class="w-full h-40 border border-gray-300 rounded-md p-3 mb-4 text-sm" placeholder="Paste postcodes here, one per line or separated by commas"></textarea>
+            <div class="flex justify-end space-x-3">
+                <button id="cancelPaste" class="px-4 py-2 border border-gray-300 rounded-md text-sm">Cancel</button>
+                <button id="processPaste" class="px-4 py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700">Add Postcodes</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Replace with your actual Google Maps API key
+            const API_KEY = 'YOUR_API_KEY';
+            
+            // Initialize map
+            let map;
+            let directionsService;
+            let directionsRenderer;
+            
+            function initMap() {
+                map = new google.maps.Map(document.getElementById('map'), {
+                    center: {lat: 51.5074, lng: -0.1278}, // London coordinates
+                    zoom: 10
+                });
+                
+                directionsService = new google.maps.DirectionsService();
+                directionsRenderer = new google.maps.DirectionsRenderer({
+                    map: map,
+                    suppressMarkers: false,
+                    preserveViewport: true
+                });
+            }
+            
+            // Initialize the map
+            if (typeof google !== 'undefined') {
+                initMap();
+            } else {
+                console.error('Google Maps API not loaded');
+            }
+            
+            // DOM elements
+            const postcodesContainer = document.getElementById('postcodesContainer');
+            const addPostcodeBtn = document.getElementById('addPostcode');
+            const pastePostcodesBtn = document.getElementById('pastePostcodes');
+            const clearAllBtn = document.getElementById('clearAll');
+            const generateRoutesBtn = document.getElementById('generateRoutes');
+            const startPostcodeInput = document.getElementById('startPostcode');
+            const endPostcodeInput = document.getElementById('endPostcode');
+            const pasteModal = document.getElementById('pasteModal');
+            const closePasteModal = document.getElementById('closePasteModal');
+            const cancelPaste = document.getElementById('cancelPaste');
+            const processPaste = document.getElementById('processPaste');
+            const bulkPostcodes = document.getElementById('bulkPostcodes');
+            const routeGroups = document.getElementById('routeGroups');
+            
+            // Add new postcode input field
+            addPostcodeBtn.addEventListener('click', function() {
+                const div = document.createElement('div');
+                div.className = 'flex items-center mb-2 draggable-item';
+                div.draggable = true;
+                div.innerHTML = `
+                    <i class="fas fa-grip-vertical text-gray-400 mr-2 cursor-move"></i>
+                    <input type="text" placeholder="e.g. M1 1AA" class="flex-1 text-sm border-b border-gray-200 py-1 outline-none">
+                    <button class="ml-2 text-red-400 hover:text-red-600">
+                        <i class="fas fa-times"></i>
+                    </button>
+                `;
+                postcodesContainer.appendChild(div);
+                
+                // Add delete functionality
+                const deleteBtn = div.querySelector('button');
+                deleteBtn.addEventListener('click', function() {
+                    postcodesContainer.removeChild(div);
+                });
+                
+                // Make draggable
+                setupDragAndDrop(div);
+            });
+            
+            // Show paste modal
+            pastePostcodesBtn.addEventListener('click', function() {
+                pasteModal.classList.remove('hidden');
+                bulkPostcodes.focus();
+            });
+            
+            // Close paste modal
+            function closeModal() {
+                pasteModal.classList.add('hidden');
+                bulkPostcodes.value = '';
+            }
+            
+            closePasteModal.addEventListener('click', closeModal);
+            cancelPaste.addEventListener('click', closeModal);
+            
+            // Process pasted postcodes
+            processPaste.addEventListener('click', function() {
+                const postcodesText = bulkPostcodes.value.trim();
+                if (postcodesText) {
+                    // Split by new lines or commas
+                    const postcodes = postcodesText.split(/[\n,]+/).map(p => p.trim()).filter(p => p);
+                    
+                    // Add each postcode
+                    postcodes.forEach(postcode => {
+                        if (postcode) {
+                            const div = document.createElement('div');
+                            div.className = 'flex items-center mb-2 draggable-item';
+                            div.draggable = true;
+                            div.innerHTML = `
+                                <i class="fas fa-grip-vertical text-gray-400 mr-2 cursor-move"></i>
+                                <input type="text" value="${postcode}" class="flex-1 text-sm border-b border-gray-200 py-1 outline-none">
+                                <button class="ml-2 text-red-400 hover:text-red-600">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            `;
+                            postcodesContainer.appendChild(div);
+                            
+                            // Add delete functionality
+                            const deleteBtn = div.querySelector('button');
+                            deleteBtn.addEventListener('click', function() {
+                                postcodesContainer.removeChild(div);
+                            });
+                            
+                            // Make draggable
+                            setupDragAndDrop(div);
+                        }
+                    });
+                    
+                    closeModal();
+                }
+            });
+            
+            // Clear all postcodes
+            clearAllBtn.addEventListener('click', function() {
+                while (postcodesContainer.firstChild) {
+                    postcodesContainer.removeChild(postcodesContainer.firstChild);
+                }
+            });
+            
+            // Setup drag and drop for postcode items
+            function setupDragAndDrop(item) {
+                item.addEventListener('dragstart', function(e) {
+                    e.dataTransfer.setData('text/plain', item.innerHTML);
+                    item.classList.add('opacity-50');
+                });
+                
+                item.addEventListener('dragend', function() {
+                    item.classList.remove('opacity-50');
+                });
+                
+                item.addEventListener('dragover', function(e) {
+                    e.preventDefault();
+                    const rect = item.getBoundingClientRect();
+                    const midpoint = rect.top + rect.height / 2;
+                    
+                    if (e.clientY < midpoint) {
+                        item.classList.add('border-t-2', 'border-blue-500');
+                        item.classList.remove('border-b-2');
+                    } else {
+                        item.classList.add('border-b-2', 'border-blue-500');
+                        item.classList.remove('border-t-2');
+                    }
+                });
+                
+                item.addEventListener('dragleave', function() {
+                    item.classList.remove('border-t-2', 'border-b-2', 'border-blue-500');
+                });
+                
+                item.addEventListener('drop', function(e) {
+                    e.preventDefault();
+                    item.classList.remove('border-t-2', 'border-b-2', 'border-blue-500');
+                    
+                    const data = e.dataTransfer.getData('text/plain');
+                    const draggedItem = document.querySelector('.draggable-item.opacity-50');
+                    
+                    if (draggedItem && draggedItem !== item) {
+                        const rect = item.getBoundingClientRect();
+                        const midpoint = rect.top + rect.height / 2;
+                        
+                        if (e.clientY < midpoint) {
+                            postcodesContainer.insertBefore(draggedItem, item);
+                        } else {
+                            postcodesContainer.insertBefore(draggedItem, item.nextSibling);
+                        }
+                    }
+                });
+            }
+            
+            // Initialize drag and drop for existing items
+            document.querySelectorAll('.draggable-item').forEach(item => {
+                setupDragAndDrop(item);
+                
+                // Add delete functionality to existing items
+                const deleteBtn = item.querySelector('button');
+                deleteBtn.addEventListener('click', function() {
+                    postcodesContainer.removeChild(item);
+                });
+            });
+            
+            // Generate routes
+            generateRoutesBtn.addEventListener('click', function() {
+                const startPostcode = startPostcodeInput.value.trim();
+                const endPostcode = endPostcodeInput.value.trim();
+                
+                if (!startPostcode || !endPostcode) {
+                    alert('Please enter both start and end postcodes');
+                    return;
+                }
+                
+                const postcodeInputs = postcodesContainer.querySelectorAll('input');
+                const postcodes = Array.from(postcodeInputs).map(input => input.value.trim()).filter(p => p);
+                
+                if (postcodes.length === 0) {
+                    alert('Please add at least one visit postcode');
+                    return;
+                }
+                
+                // Show loading state
+                generateRoutesBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Calculating Routes...';
+                generateRoutesBtn.disabled = true;
+                
+                // Simulate API call with timeout (in a real app, you'd call your backend here)
+                setTimeout(function() {
+                    // Clear existing route groups
+                    routeGroups.innerHTML = '';
+                    
+                    // Get selected group size
+                    const groupSize = parseInt(document.getElementById('visitsPerGroup').value);
+                    const groups = [];
+                    for (let i = 0; i < postcodes.length; i += groupSize) {
+                        groups.push(postcodes.slice(i, i + groupSize));
+                    }
+                    
+                    // Generate route groups UI
+                    groups.forEach((group, index) => {
+                        const routeGroup = document.createElement('div');
+                        routeGroup.className = 'bg-white rounded-lg shadow-md p-4 route-group';
+                        routeGroup.innerHTML = `
+                            <div class="flex justify-between items-center mb-3">
+                                <h3 class="font-semibold text-blue-600">Route Group ${index + 1}</h3>
+                                <span class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">${group.length} of ${groupSize} visits</span>
+                            </div>
+                            <div class="bg-gray-50 p-3 rounded-md mb-2">
+                                <div class="flex items-center text-sm text-gray-600 mb-1">
+                                    <i class="fas fa-map-marker-alt text-blue-500 mr-2"></i>
+                                    <span>${startPostcode} (Start)</span>
+                                </div>
+                                <ol class="list-decimal list-inside ml-5 space-y-1 text-sm">
+                                    ${group.map(postcode => `<li class="text-gray-700">${postcode}</li>`).join('')}
+                                </ol>
+                                <div class="flex items-center text-sm text-gray-600 mt-2">
+                                    <i class="fas fa-flag-checkered text-red-500 mr-2"></i>
+                                    <span>${endPostcode} (End)</span>
+                                </div>
+                            </div>
+                            <div class="flex justify-between items-center text-sm">
+                                <span class="text-gray-500"><i class="fas fa-road mr-1"></i> Estimated distance: ${(Math.random() * 20 + 5).toFixed(1)} miles</span>
+                                <span class="text-gray-500"><i class="fas fa-clock mr-1"></i> Estimated time: ${Math.floor(Math.random() * 30 + 20)} min</span>
+                                <span class="text-gray-500"><i class="fas fa-tag mr-1"></i> ${Math.random() > 0.7 ? 'Contains toll roads' : 'No toll roads'}</span>
+                            </div>
+                        `;
+                        routeGroups.appendChild(routeGroup);
+                    });
+                    
+                    // Update map with first route (simulated)
+                    if (groups.length > 0) {
+                        // In a real app, you would call the Google Maps API to display the route
+                        // For this example, we'll just center the map on London
+                        map.setCenter({lat: 51.5074, lng: -0.1278});
+                        map.setZoom(10);
+                        
+                        // Show a success message
+                        const successMsg = document.createElement('div');
+                        successMsg.className = 'bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative mb-4';
+                        successMsg.setAttribute('role', 'alert');
+                        successMsg.innerHTML = `
+                            <strong class="font-bold">Success!</strong>
+                            <span class="block sm:inline"> ${groups.length} route groups generated.</span>
+                        `;
+                        routeGroups.insertBefore(successMsg, routeGroups.firstChild);
+                    }
+                    
+                    // Reset button state
+                    generateRoutesBtn.innerHTML = '<i class="fas fa-route mr-2"></i> Generate Optimal Routes';
+                    generateRoutesBtn.disabled = false;
+                }, 1500);
+            });
+            
+            // UK postcode validation (basic pattern)
+            function isValidUKPostcode(postcode) {
+                // Basic UK postcode pattern (not exhaustive)
+                const pattern = /^[A-Z]{1,2}[0-9][A-Z0-9]? ?[0-9][A-Z]{2}$/i;
+                return pattern.test(postcode);
+            }
+            
+            // Add basic validation to postcode inputs
+            [startPostcodeInput, endPostcodeInput].forEach(input => {
+                input.addEventListener('blur', function() {
+                    const value = this.value.trim();
+                    if (value && !isValidUKPostcode(value)) {
+                        this.classList.add('border-red-500');
+                    } else {
+                        this.classList.remove('border-red-500');
+                    }
+                });
+            });
+        });
+    </script>
+</body>
+</html>
