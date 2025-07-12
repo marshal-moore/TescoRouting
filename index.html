@@ -365,8 +365,85 @@
                 });
             });
             
+            // Geocode a postcode to get lat/lng
+            function geocodePostcode(postcode) {
+                return new Promise((resolve, reject) => {
+                    const geocoder = new google.maps.Geocoder();
+                    geocoder.geocode({ address: postcode + ', UK' }, (results, status) => {
+                        if (status === 'OK' && results[0]) {
+                            resolve(results[0].geometry.location);
+                        } else {
+                            reject(new Error('Geocode failed for postcode: ' + postcode));
+                        }
+                    });
+                });
+            }
+
+            // Calculate distance matrix between locations
+            function calculateDistanceMatrix(origins, destinations) {
+                return new Promise((resolve, reject) => {
+                    const service = new google.maps.DistanceMatrixService();
+                    service.getDistanceMatrix({
+                        origins: origins,
+                        destinations: destinations,
+                        travelMode: 'DRIVING',
+                        unitSystem: google.maps.UnitSystem.IMPERIAL,
+                    }, (response, status) => {
+                        if (status === 'OK') {
+                            resolve(response);
+                        } else {
+                            reject(new Error('Distance matrix request failed'));
+                        }
+                    });
+                });
+            }
+
+            // Generate optimal route using nearest neighbor algorithm
+            async function generateOptimalRoute(startLocation, endLocation, locations) {
+                let currentLocation = startLocation;
+                const unvisited = [...locations];
+                const route = [];
+                let totalDistance = 0;
+                let totalDuration = 0;
+
+                while (unvisited.length > 0) {
+                    // Get distances from current location to all unvisited locations
+                    const distanceResponse = await calculateDistanceMatrix([currentLocation], unvisited);
+                    const distances = distanceResponse.rows[0].elements;
+
+                    // Find nearest location
+                    let minDistance = Infinity;
+                    let nearestIndex = 0;
+                    for (let i = 0; i < distances.length; i++) {
+                        if (distances[i].distance.value < minDistance) {
+                            minDistance = distances[i].distance.value;
+                            nearestIndex = i;
+                        }
+                    }
+
+                    // Add to route
+                    const nearestLocation = unvisited[nearestIndex];
+                    route.push(nearestLocation);
+                    totalDistance += distances[nearestIndex].distance.value;
+                    totalDuration += distances[nearestIndex].duration.value;
+                    currentLocation = nearestLocation;
+                    unvisited.splice(nearestIndex, 1);
+                }
+
+                // Add distance from last location to end point
+                const finalDistance = await calculateDistanceMatrix([currentLocation], [endLocation]);
+                totalDistance += finalDistance.rows[0].elements[0].distance.value;
+                totalDuration += finalDistance.rows[0].elements[0].duration.value;
+
+                return {
+                    route,
+                    totalDistance,
+                    totalDuration
+                };
+            }
+
             // Generate routes
-            generateRoutesBtn.addEventListener('click', function() {
+            generateRoutesBtn.addEventListener('click', async function() {
                 const startPostcode = startPostcodeInput.value.trim();
                 const endPostcode = endPostcodeInput.value.trim();
                 
@@ -387,25 +464,59 @@
                 generateRoutesBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Calculating Routes...';
                 generateRoutesBtn.disabled = true;
                 
-                // Simulate API call with timeout (in a real app, you'd call your backend here)
-                setTimeout(function() {
-                    // Clear existing route groups
-                    routeGroups.innerHTML = '';
+                try {
+                    // Geocode all postcodes
+                    const startLocation = await geocodePostcode(startPostcode);
+                    const endLocation = await geocodePostcode(endPostcode);
+                    const visitLocations = await Promise.all(postcodes.map(p => geocodePostcode(p)));
                     
                     // Get selected group size
                     const groupSize = parseInt(document.getElementById('visitsPerGroup').value);
+                    const optimize = document.getElementById('optimizeRoute').checked;
+                    
+                    // Clear existing route groups
+                    routeGroups.innerHTML = '';
+                    
+                    // Split into groups
                     const groups = [];
-                    for (let i = 0; i < postcodes.length; i += groupSize) {
-                        groups.push(postcodes.slice(i, i + groupSize));
+                    for (let i = 0; i < visitLocations.length; i += groupSize) {
+                        groups.push(visitLocations.slice(i, i + groupSize));
                     }
                     
-                    // Generate route groups UI
-                    groups.forEach((group, index) => {
+                    // Process each group
+                    for (let i = 0; i < groups.length; i++) {
+                        const group = groups[i];
+                        let optimizedGroup = group;
+                        let distance = 0;
+                        let duration = 0;
+                        
+                        if (optimize && group.length > 1) {
+                            // Optimize route order
+                            const result = await generateOptimalRoute(startLocation, endLocation, group);
+                            optimizedGroup = result.route;
+                            distance = result.totalDistance;
+                            duration = result.totalDuration;
+                        } else {
+                            // Calculate distance for unoptimized route
+                            const waypoints = [...group, endLocation];
+                            const origins = [startLocation, ...group];
+                            const distanceResponse = await calculateDistanceMatrix(origins, waypoints);
+                            
+                            // Sum up distances
+                            for (let j = 0; j < group.length; j++) {
+                                distance += distanceResponse.rows[j].elements[j].distance.value;
+                                duration += distanceResponse.rows[j].elements[j].duration.value;
+                            }
+                            // Add distance from last point to end
+                            distance += distanceResponse.rows[group.length].elements[group.length].distance.value;
+                            duration += distanceResponse.rows[group.length].elements[group.length].duration.value;
+                        }
+                        // Generate route group UI
                         const routeGroup = document.createElement('div');
                         routeGroup.className = 'bg-white rounded-lg shadow-md p-4 route-group';
                         routeGroup.innerHTML = `
                             <div class="flex justify-between items-center mb-3">
-                                <h3 class="font-semibold text-blue-600">Route Group ${index + 1}</h3>
+                                <h3 class="font-semibold text-blue-600">Route Group ${i + 1}</h3>
                                 <span class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">${group.length} of ${groupSize} visits</span>
                             </div>
                             <div class="bg-gray-50 p-3 rounded-md mb-2">
@@ -414,7 +525,7 @@
                                     <span>${startPostcode} (Start)</span>
                                 </div>
                                 <ol class="list-decimal list-inside ml-5 space-y-1 text-sm">
-                                    ${group.map(postcode => `<li class="text-gray-700">${postcode}</li>`).join('')}
+                                    ${optimizedGroup.map((_, idx) => `<li class="text-gray-700">${postcodes[i * groupSize + idx]}</li>`).join('')}
                                 </ol>
                                 <div class="flex items-center text-sm text-gray-600 mt-2">
                                     <i class="fas fa-flag-checkered text-red-500 mr-2"></i>
@@ -422,36 +533,31 @@
                                 </div>
                             </div>
                             <div class="flex justify-between items-center text-sm">
-                                <span class="text-gray-500"><i class="fas fa-road mr-1"></i> Estimated distance: ${(Math.random() * 20 + 5).toFixed(1)} miles</span>
-                                <span class="text-gray-500"><i class="fas fa-clock mr-1"></i> Estimated time: ${Math.floor(Math.random() * 30 + 20)} min</span>
-                                <span class="text-gray-500"><i class="fas fa-tag mr-1"></i> ${Math.random() > 0.7 ? 'Contains toll roads' : 'No toll roads'}</span>
+                                <span class="text-gray-500"><i class="fas fa-road mr-1"></i> Estimated distance: ${(distance * 0.000621371).toFixed(1)} miles</span>
+                                <span class="text-gray-500"><i class="fas fa-clock mr-1"></i> Estimated time: ${Math.ceil(duration / 60)} min</span>
                             </div>
                         `;
                         routeGroups.appendChild(routeGroup);
-                    });
-                    
-                    // Update map with first route (simulated)
-                    if (groups.length > 0) {
-                        // In a real app, you would call the Google Maps API to display the route
-                        // For this example, we'll just center the map on London
-                        map.setCenter({lat: 51.5074, lng: -0.1278});
-                        map.setZoom(10);
-                        
-                        // Show a success message
-                        const successMsg = document.createElement('div');
-                        successMsg.className = 'bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative mb-4';
-                        successMsg.setAttribute('role', 'alert');
-                        successMsg.innerHTML = `
-                            <strong class="font-bold">Success!</strong>
-                            <span class="block sm:inline"> ${groups.length} route groups generated.</span>
-                        `;
-                        routeGroups.insertBefore(successMsg, routeGroups.firstChild);
                     }
                     
+                    // Show success message
+                    const successMsg = document.createElement('div');
+                    successMsg.className = 'bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative mb-4';
+                    successMsg.setAttribute('role', 'alert');
+                    successMsg.innerHTML = `
+                        <strong class="font-bold">Success!</strong>
+                        <span class="block sm:inline"> ${groups.length} route groups generated.</span>
+                    `;
+                    routeGroups.insertBefore(successMsg, routeGroups.firstChild);
+                    
+                } catch (error) {
+                    console.error('Error generating routes:', error);
+                    alert('Error generating routes: ' + error.message);
+                } finally {
                     // Reset button state
                     generateRoutesBtn.innerHTML = '<i class="fas fa-route mr-2"></i> Generate Optimal Routes';
                     generateRoutesBtn.disabled = false;
-                }, 1500);
+                }
             });
             
             // UK postcode validation (basic pattern)
